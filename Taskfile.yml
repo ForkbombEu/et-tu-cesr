@@ -1,0 +1,17 @@
+# https://taskfile.dev
+version: '3'
+
+tasks:
+  default:
+    cmds:
+      - go build -o et-tu-cesr main.go
+
+  test:
+    cmds:
+      - go vet ./...
+      - go test ./...
+
+
+  clean:
+    cmds:
+      - rm et-tu-cesr
