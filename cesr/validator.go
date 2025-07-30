@@ -41,12 +41,27 @@ func chooseFile(ked map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("missing \"a\" section")
 	}
 	switch {
-	case a["LEI"] != nil && a["f"] != nil:
+	case a["engagementContextRole"] != nil && a["AID"] != nil:
+		return "ecr-authorization-vlei-credential.json", nil
+
+	case a["engagementContextRole"] != nil:
 		return "legal-entity-engagement-context-role-vLEI-credential.json", nil
+
+	case a["officialRole"] != nil && a["AID"] != nil:
+		return "oor-authorization-vlei-credential.json", nil
+
 	case a["officialRole"] != nil:
 		return "legal-entity-official-organizational-role-vLEI-credential.json", nil
-	case a["LEI"] != nil:
+
+	case a["LEI"] != nil && ked["e"] != nil:
 		return "legal-entity-vLEI-credential.json", nil
+
+	case a["LEI"] != nil:
+		return "qualified-vLEI-issuer-vLEI-credential.json", nil
+
+	case a["f"] != nil:
+		return "verifiable-ixbrl-report-attestation.json", nil
+
 	default:
 		return "", fmt.Errorf("unrecognised credential type")
 	}

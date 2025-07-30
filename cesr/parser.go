@@ -7,7 +7,7 @@ import (
 	"strconv"
 )
 
-var hdrRE = regexp.MustCompile(`\{"v":"((?:KERI|ACDC)[0-9]{2}[A-Z]{4}[0-9A-F]{6}_)`)
+var hdrRE = regexp.MustCompile(`\{"v":"((?:KERI|ACDC)[0-9]{2}[A-Z]{4}[0-9a-f]{6}_)`)
 
 type Event struct {
 	KED         map[string]interface{}
