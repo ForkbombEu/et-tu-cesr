@@ -1,9 +1,11 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 
@@ -19,6 +21,9 @@ Usage:
     et-tu-cesr help                          show this message
 `)
 }
+
+//go:embed schema/acdc/*/*
+var schemaFiles embed.FS
 
 func prettyPrint(events []cesr.Event, filterCreds bool) {
 	for i, ev := range events {
@@ -61,16 +66,21 @@ func runValidate(file string) error {
 	if err != nil {
 		return err
 	}
+	subRoot, err := fs.Sub(schemaFiles, "schema/acdc")
+	if err != nil {
+		return err
+	}
+	v := cesr.NewValidator(subRoot)
 
-	// 2 – create a lightweight validator that points at your schema folder
-	v := cesr.NewValidator("schema/acdc") // adjust if your path differs
+	var errs []string
+	valid := 0
 
 	// 3 – walk events
-	valid := 0
 	for idx, ev := range events {
 		if err := v.ValidateCredential(ev.KED); err != nil {
 			sn := ev.KED["s"]
-			return fmt.Errorf("%s: event %d (sn=%v) ⇒ %v", file, idx+1, sn, err)
+			errs = append(errs, fmt.Sprintf("%s: event %d (sn=%v) ⇒ %v", file, idx+1, sn, err))
+			continue
 		}
 		// count only credential bodies (v starts with ACDC)
 		if ver, _ := ev.KED["v"].(string); len(ver) >= 4 && ver[:4] == "ACDC" {
@@ -78,7 +88,11 @@ func runValidate(file string) error {
 		}
 	}
 
-	fmt.Printf("✅ %d credential bodies valid in %s\n", valid, file)
+	if len(errs) > 0 {
+		return fmt.Errorf("validation errors:\n%s", strings.Join(errs, "\n"))
+	}
+
+	fmt.Printf("✅ %d credential bodies valid in %s\n", valid, file)
 	return nil
 }
 
@@ -92,6 +106,7 @@ func main() {
 	}
 
 	switch cmd := flag.Arg(0); cmd {
+
 	case "dump":
 		if flag.NArg() != 2 {
 			usage()
@@ -118,7 +133,7 @@ func main() {
 			os.Exit(1)
 		}
 		if err := runValidate(flag.Arg(1)); err != nil {
-			fmt.Fprintln(os.Stderr, "validation failed:", err)
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 

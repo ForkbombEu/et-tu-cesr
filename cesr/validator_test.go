@@ -59,6 +59,28 @@ func TestValidateCredential(t *testing.T) {
 				"e": map[string]interface{}{
 					"something": true,
 				},
+				"g": "error-test",
+			},
+			setupSchemas: func(t *testing.T, root string) {
+				dir := filepath.Join(root, "2023")
+				if err := os.MkdirAll(dir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				writeSchemaFile(t, dir, "legal-entity-vLEI-credential.json", dummySchema)
+			},
+			expectError:   true,
+			errorContains: "validation error",
+		},
+		{
+			name: "Invalid credential",
+			credential: map[string]interface{}{
+				"v": "ACDC000000_",
+				"a": map[string]interface{}{
+					"LEI": "1234567890ABCDEF",
+				},
+				"e": map[string]interface{}{
+					"something": true,
+				},
 			},
 			setupSchemas: func(t *testing.T, root string) {
 				dir := filepath.Join(root, "2023")
@@ -113,6 +135,18 @@ func TestValidateCredential(t *testing.T) {
 			expectError:   true,
 			errorContains: "compile error",
 		},
+		{
+			name: "No schema versions available",
+			credential: map[string]interface{}{
+				"v": "ACDC/1.0",
+				"a": map[string]interface{}{
+					"LEI": "1234567890ABCDEF",
+				},
+			},
+			setupSchemas:  func(t *testing.T, root string) {},
+			expectError:   true,
+			errorContains: "no schema versions available",
+		},
 	}
 
 	for _, tt := range tests {
@@ -120,7 +154,9 @@ func TestValidateCredential(t *testing.T) {
 			tmpRoot := t.TempDir()
 			tt.setupSchemas(t, tmpRoot)
 
-			v := NewValidator(tmpRoot)
+			// Create fs.FS from temporary directory
+			fsys := os.DirFS(tmpRoot)
+			v := NewValidator(fsys)
 			err := v.ValidateCredential(tt.credential)
 
 			if tt.expectError {

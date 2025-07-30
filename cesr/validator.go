@@ -1,7 +1,9 @@
 package cesr
 
 import (
+	"bytes"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strings"
 
@@ -9,32 +11,69 @@ import (
 )
 
 // Validator walks a short list of schema folders – newest first – and
-// validates a single ACDC credential event.  No caching involved.
-type Validator struct{ dirs []string }
+// validates a single ACDC credential event. No caching involved.
+// Validator walks through schema directories (newest first) using fs.FS
+type Validator struct {
+	root     fs.FS             // Root directory for schema files
+	versions []versionCompiler // Each version has a name and a compiler
+}
 
-// NewValidator builds an *absolute* search list:
-//
-//	<root>/2023/acdc/   (current spec)
-//	<root>/2022/acdc/   (legacy)
-//
-// Pass the root once (e.g. "schema") and forget about cwd quirks.
-func NewValidator(root string) *Validator {
-	abs, err := filepath.Abs(root)
-	if err != nil {
-		// fallback to the original string – Compile will fail clearly later
-		abs = root
+type versionCompiler struct {
+	name     string
+	compiler *jsonschema.Compiler
+}
+type MissingSchemaError struct{}
+
+func (MissingSchemaError) Error() string {
+	return "the schema file is missing or unreadable"
+}
+
+// NewValidator creates a Validator with embedded schema directories
+func NewValidator(root fs.FS) *Validator {
+	versions := []versionCompiler{}
+
+	for _, year := range []string{"2023", "2022"} {
+		_, err := fs.Stat(root, year)
+		if err != nil {
+			continue // Skip missing version
+		}
+		versions = append(versions, versionCompiler{
+			name: year,
+		})
 	}
+
 	return &Validator{
-		dirs: []string{
-			filepath.Join(abs, "2023"),
-			filepath.Join(abs, "2022"),
-		},
+		root:     root,
+		versions: versions,
 	}
 }
 
-// -----------------------------------------------------------------------------
-// tiny heuristic → schema filename
-// -----------------------------------------------------------------------------
+// createCompiler loads all JSON schemas in an FS into a compiler
+func (vc *versionCompiler) updateCompiler(fsys fs.FS, version string, path string) error {
+	if vc.compiler == nil {
+		vc.compiler = jsonschema.NewCompiler()
+	}
+	// Read schema file
+	content, err := fs.ReadFile(fsys, path)
+	if err != nil {
+		return MissingSchemaError{}
+	}
+
+	// Create URI for this schema (version + filename)
+	uri := fmt.Sprintf("acdc-schema:///%s/%s", version, filepath.Base(path))
+	schema, err := jsonschema.UnmarshalJSON(bytes.NewReader(content))
+	if err != nil {
+		return err
+	}
+	// Add to compiler
+	if err := vc.compiler.AddResource(uri, schema); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// chooseFile picks schema filename from the credential event map
 func chooseFile(ked map[string]interface{}) (string, error) {
 	a, ok := ked["a"].(map[string]interface{})
 	if !ok {
@@ -67,12 +106,11 @@ func chooseFile(ked map[string]interface{}) (string, error) {
 	}
 }
 
-// -----------------------------------------------------------------------------
-// ValidateCredential – try every version folder until one compiles *and*
-// accepts the credential.  Return a composite error otherwise.
-// -----------------------------------------------------------------------------
+// ValidateCredential tries all schema dirs until one validates the credential.
+// Returns nil if successful, or an aggregate error listing attempts.
+// ValidateCredential uses pre-loaded compilers to validate schemas
 func (v *Validator) ValidateCredential(ked map[string]interface{}) error {
-	// ignore non‑ACDC events
+	// Skip non-ACDC events
 	if ver, _ := ked["v"].(string); !strings.HasPrefix(ver, "ACDC") {
 		return nil
 	}
@@ -83,22 +121,35 @@ func (v *Validator) ValidateCredential(ked map[string]interface{}) error {
 	}
 
 	var attempts []string
-	for _, dir := range v.dirs {
-		path := filepath.Join(dir, fname)
-		uri := "file://" + filepath.ToSlash(path) // absolute file URI
-
-		c := jsonschema.NewCompiler()
-		sch, err := c.Compile(uri)
+	for _, vc := range v.versions {
+		// Create URI for the schema file in this version
+		uri := fmt.Sprintf("acdc-schema:///%s/%s", vc.name, fname)
+		path := filepath.Join(vc.name, fname)
+		err = vc.updateCompiler(v.root, vc.name, path)
 		if err != nil {
-			attempts = append(attempts,
-				fmt.Sprintf("%s (compile error: %v)", uri, err))
+			if _, ok := err.(MissingSchemaError); !ok {
+				attempts = append(attempts, fmt.Sprintf("%s (compile error: %v)", uri, err))
+			}
 			continue
 		}
+		sch, err := vc.compiler.Compile(uri)
+		if err != nil {
+			attempts = append(attempts,
+				fmt.Sprintf("%s (compiled error: %v)", uri, err))
+			continue
+		}
+
+		// Validate against schema
 		if err = sch.Validate(ked); err == nil {
-			return nil // 🎉 validated successfully
+			return nil // Success
 		}
 		attempts = append(attempts,
 			fmt.Sprintf("%s (validation error: %v)", uri, err))
+
+	}
+
+	if len(attempts) == 0 {
+		return fmt.Errorf("no schema versions available for validation")
 	}
 
 	return fmt.Errorf("no schema accepted credential; tried:\n  %s",
