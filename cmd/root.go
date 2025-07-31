@@ -41,5 +41,6 @@ func Execute(schemaFiles embed.FS) error {
 	rootCmd.AddCommand(newDumpCmd())
 	rootCmd.AddCommand(newDumpCredsCmd())
 	rootCmd.AddCommand(newValidateCmd(schemaFiles))
+	rootCmd.AddCommand(newValidateParsedCmd(schemaFiles))
 	return rootCmd.Execute()
 }

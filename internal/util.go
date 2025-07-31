@@ -28,7 +28,7 @@ func prettyPrint(events []cesr.Event, filterCreds bool) {
 	}
 }
 
-func readCESRContent(path string, args []string) (string, error) {
+func readContent(path string, args []string) (string, error) {
 	if path != "" {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -52,7 +52,7 @@ func readCESRContent(path string, args []string) (string, error) {
 }
 
 func RunDump(path string, args []string, credsOnly bool) error {
-	content, err := readCESRContent(path, args)
+	content, err := readContent(path, args)
 	if err != nil {
 		return err
 	}
@@ -66,7 +66,7 @@ func RunDump(path string, args []string, credsOnly bool) error {
 }
 
 func RunValidate(path string, args []string, schemaFiles embed.FS) error {
-	content, err := readCESRContent(path, args)
+	content, err := readContent(path, args)
 	if err != nil {
 		return err
 	}
@@ -74,10 +74,28 @@ func RunValidate(path string, args []string, schemaFiles embed.FS) error {
 	if err != nil {
 		return err
 	}
+	return validateEvents(events, schemaFiles)
+}
+func RunValidateParsedJSON(path string, args []string, schemaFiles embed.FS) error {
+	jsonStr, err := readContent(path, args)
+	if err != nil {
+		return err
+	}
+
+	var events []cesr.Event
+	if err := json.Unmarshal([]byte(jsonStr), &events); err != nil {
+		return fmt.Errorf("failed to unmarshal events JSON: %w", err)
+	}
+
+	return validateEvents(events, schemaFiles)
+}
+
+func validateEvents(events []cesr.Event, schemaFiles embed.FS) error {
 	subRoot, err := fs.Sub(schemaFiles, "schema/acdc")
 	if err != nil {
 		return err
 	}
+
 	v := cesr.NewValidator(subRoot)
 
 	var errs []string
