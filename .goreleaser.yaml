@@ -39,7 +39,3 @@ changelog:
       - "^test:"
 checksum:
   name_template: "{{ .ProjectName }}_v{{ .Version }}_checksums.txt"
-
-announce:
-  mattermost:
-    enabled: true
