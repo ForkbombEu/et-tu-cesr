@@ -29,6 +29,7 @@ builds:
       - -s -w -X github.com/ForkbombEu/et-tu-cesr/cmd.version={{.Version}}
 archives:
   - format: binary
+    name_template: "{{ .Binary }}"
 changelog:
   sort: asc
   filters:
