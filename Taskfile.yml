@@ -1,16 +1,17 @@
 # https://taskfile.dev
-version: '3'
-
+version: "3"
+vars:
+  # Get the latest version tag from GitHub, fallback to "dev" if no tag
+  VERSION:
+    sh: git describe --tags --abbrev=0 2>/dev/null || echo "dev"
 tasks:
   default:
     cmds:
-      - go build -o et-tu-cesr main.go
-
+      - go build -ldflags "-s -w -X github.com/ForkbombEu/et-tu-cesr/cmd.version={{.VERSION}}" -o et-tu-cesr main.go
   test:
     cmds:
       - go vet ./...
       - go test ./...
-
 
   clean:
     cmds:
