@@ -3,24 +3,16 @@ package main
 import (
 	"embed"
 	"encoding/json"
-	"flag"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"strings"
 
 	"github.com/ForkbombEu/et-tu-cesr/cesr"
+	"github.com/spf13/cobra"
 )
-
-func usage() {
-	fmt.Fprintf(os.Stderr, `Et tu, CESR? – stab CESR streams and reveal their JSON
-
-Usage:
-    et-tu-cesr dump <file.cesr>              pretty‑print every event
-    et-tu-cesr dump-credentials <file.cesr>  pretty‑print only ACDC credential bodies
-    et-tu-cesr help                          show this message
-`)
-}
 
 //go:embed schema/acdc/*/*
 var schemaFiles embed.FS
@@ -40,12 +32,38 @@ func prettyPrint(events []cesr.Event, filterCreds bool) {
 	}
 }
 
-func runDump(file string, credsOnly bool) error {
-	data, err := os.ReadFile(file)
+func readCESRContent(path string, args []string) (string, error) {
+	if path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
+	}
+
+	// No path given - read from args or stdin
+	if len(args) > 0 {
+		return args[0], nil
+	}
+
+	// read from stdin
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return "", err
+	}
+	if len(data) == 0 {
+		return "", errors.New("no input provided via -p, argument, or stdin")
+	}
+	return string(data), nil
+}
+
+func runDump(path string, args []string, credsOnly bool) error {
+	content, err := readCESRContent(path, args)
 	if err != nil {
 		return err
 	}
-	events, err := cesr.ParseCESR(string(data))
+
+	events, err := cesr.ParseCESR(content)
 	if err != nil {
 		return err
 	}
@@ -53,16 +71,12 @@ func runDump(file string, credsOnly bool) error {
 	return nil
 }
 
-// runValidate validates every credential event in a .cesr file
-// using the super‑simple Validator (no caching, schema chosen by filename).
-// It prints a summary and returns an error on first failure.
-func runValidate(file string) error {
-	// 1 – read the CESR stream
-	data, err := os.ReadFile(file)
+func runValidate(path string, args []string) error {
+	content, err := readCESRContent(path, args)
 	if err != nil {
 		return err
 	}
-	events, err := cesr.ParseCESR(string(data))
+	events, err := cesr.ParseCESR(content)
 	if err != nil {
 		return err
 	}
@@ -75,14 +89,12 @@ func runValidate(file string) error {
 	var errs []string
 	valid := 0
 
-	// 3 – walk events
 	for idx, ev := range events {
 		if err := v.ValidateCredential(ev.KED); err != nil {
 			sn := ev.KED["s"]
-			errs = append(errs, fmt.Sprintf("%s: event %d (sn=%v) ⇒ %v", file, idx+1, sn, err))
+			errs = append(errs, fmt.Sprintf("event %d (sn=%v) ⇒ %v", idx+1, sn, err))
 			continue
 		}
-		// count only credential bodies (v starts with ACDC)
 		if ver, _ := ev.KED["v"].(string); len(ver) >= 4 && ver[:4] == "ACDC" {
 			valid++
 		}
@@ -92,57 +104,62 @@ func runValidate(file string) error {
 		return fmt.Errorf("validation errors:\n%s", strings.Join(errs, "\n"))
 	}
 
-	fmt.Printf("✅ %d credential bodies valid in %s\n", valid, file)
+	fmt.Printf("✅ %d credential bodies valid\n", valid)
 	return nil
 }
 
 func main() {
-	flag.Usage = usage
-	flag.Parse()
+	var rootCmd = &cobra.Command{
+		Use:   "et-tu-cesr",
+		Short: "Et tu, CESR? – stab CESR streams and reveal their JSON",
+		Long: `Et tu, CESR? – stab CESR streams and reveal their JSON
 
-	if flag.NArg() < 1 {
-		usage()
-		os.Exit(1)
+Usage examples:
+  et-tu-cesr dump -p file.cesr
+  et-tu-cesr dump-credentials "cesr-content-string"
+  echo "<cesr-content>" | et-tu-cesr validate-credentials
+`,
 	}
 
-	switch cmd := flag.Arg(0); cmd {
+	var path string
 
-	case "dump":
-		if flag.NArg() != 2 {
-			usage()
-			os.Exit(1)
-		}
-		if err := runDump(flag.Arg(1), false); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
-		}
+	// dump command
+	var dumpCmd = &cobra.Command{
+		Use:   "dump [cesr-content]",
+		Short: "pretty-print every event from CESR stream",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDump(path, args, false)
+		},
+	}
+	dumpCmd.Flags().StringVarP(&path, "path", "p", "", "path to CESR file")
 
-	case "dump-credentials":
-		if flag.NArg() != 2 {
-			usage()
-			os.Exit(1)
-		}
-		if err := runDump(flag.Arg(1), true); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
-			os.Exit(1)
-		}
+	// dump-credentials command
+	var dumpCredsCmd = &cobra.Command{
+		Use:   "dump-credentials [cesr-content]",
+		Short: "pretty-print only ACDC credential bodies",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDump(path, args, true)
+		},
+	}
+	dumpCredsCmd.Flags().StringVarP(&path, "path", "p", "", "path to CESR file")
 
-	case "validate-credentials":
-		if flag.NArg() != 2 {
-			usage()
-			os.Exit(1)
-		}
-		if err := runValidate(flag.Arg(1)); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+	// validate-credentials command
+	var validateCmd = &cobra.Command{
+		Use:   "validate-credentials [cesr-content]",
+		Short: "validate credential events in a CESR stream",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runValidate(path, args)
+		},
+	}
+	validateCmd.Flags().StringVarP(&path, "path", "p", "", "path to CESR file")
 
-	case "help":
-		usage()
+	rootCmd.AddCommand(dumpCmd, dumpCredsCmd, validateCmd)
 
-	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
-		usage()
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
