@@ -10,7 +10,6 @@ import (
 
 //go:embed schema/acdc/*/*
 var schemaFiles embed.FS
-var version = "dev"
 
 func main() {
 	if err := cmd.Execute(schemaFiles); err != nil {
